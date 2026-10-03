@@ -1,0 +1,429 @@
+{
+  "name": "Desafio DIO N8N",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "Clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -224,
+        656
+      ],
+      "id": "204d002d-0e02-4c32-a899-532e247dd407",
+      "name": "Webhook",
+      "webhookId": "dd44b467-9982-48e4-a097-2f74bd3cfc13"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1184,
+        352
+      ],
+      "id": "fc611446-7781-4376-9c98-d350d1124465",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        0,
+        560
+      ],
+      "id": "2c3c1bfe-bd8a-4414-bfa0-0981e1d9e012",
+      "name": "HTTP Request Investimento"
+    },
+    {
+      "parameters": {
+        "mode": "combineBySql",
+        "query": "SELECT \n    input1.Nome AS Nome,\n    input1.Email AS Email,\n    input1.Saldo AS Saldo,\n    input1.Perfil AS Perfil,\n    input2.Nome AS Nome_Investimento,\n    input2.Email AS Rendimento_Investimento,\n    input2.Saldo AS Minimo_Investimento\nFROM input1\nINNER JOIN input2 \n    ON input1.Perfil = input2.Perfil\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        448,
+        656
+      ],
+      "id": "a92b9832-9c0e-41fc-904a-3a10365d4031",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst clientesMap = {};\n\n// 1. Agrupa os investimentos dentro de cada cliente usando o Email como chave única\nfor (let item of items) {\n  const data = item.json;\n  const emailCliente = data.Email;\n\n  // Se o cliente ainda não foi adicionado ao mapa, inicializa ele\n  if (!clientesMap[emailCliente]) {\n    clientesMap[emailCliente] = {\n      Nome: data.Nome,\n      Email: data.Email,\n      Saldo: data.Saldo,\n      Perfil: data.Perfil,\n      Investimentos_Recomendados: []\n    };\n  }\n\n  // Adiciona o investimento atual à lista desse cliente se ele existir\n  if (data.Nome_Investimento) {\n    clientesMap[emailCliente].Investimentos_Recomendados.push({\n      Produto: data.Nome_Investimento,\n      Rentabilidade: data.Rendimento_Investimento,\n      Minimo: data.Minimo_Investimento\n    });\n  }\n}\n\n// 2. Transforma o mapa de clientes de volta no formato de lista do n8n e cria o pre-prompt\nconst result = [];\n\nfor (let email in clientesMap) {\n  const cliente = clientesMap[email];\n\n  // Cria o texto dos investimentos formatado para o pre-prompt\n  let textoInvestimentos = '';\n  cliente.Investimentos_Recomendados.forEach((inv, index) => {\n    textoInvestimentos += `${index + 1}. ${inv.Produto}\\n   - Rentabilidade: ${inv.Rentabilidade}\\n   - Aplicação Mínima: ${inv.Minimo}\\n\\n`;\n  });\n\n  // Monta o Pre-Prompt único consolidado para este cliente\n  const prePrompt = `Você é um assessor de investimentos especializado. Crie uma mensagem de recomendação personalizada para o cliente contendo TODOS os produtos listados abaixo:\n\n[DADOS DO CLIENTE]\nNome: ${cliente.Nome}\nE-mail: ${cliente.Email}\nPerfil de Investidor: ${cliente.Perfil}\nSaldo Disponível: ${cliente.Saldo}\n\n[PRODUTOS RECOMENDADOS]\n${textoInvestimentos}\n[INSTRUÇÕES DA MENSAGEM]\nEscreva um e-mail persuasivo e estruturado. Apresente as opções acima como uma carteira recomendada ideal para o perfil \"${cliente.Perfil}\" dele. Mantenha um tom profissional, amigável e consultivo.`;\n\n  // Salva no formato final que o n8n espera\n  result.push({\n    json: {\n      ...cliente,\n      pre_prompt: prePrompt\n    }\n  });\n}\n\nreturn result;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        656
+      ],
+      "id": "4c062488-d1ce-497c-8f05-42d95ea5dacd",
+      "name": "Codigo para gerar o Prompt"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Captura a string CSV que está dentro da propriedade \"data\"\nconst csvRaw = $input.first().json.data || \"\";\n\n// Divide o texto por linhas e remove linhas vazias\nconst linhas = csvRaw.split('\\n').map(l => l.trim()).filter(l => l.length > 0);\n\n// Remove a primeira linha (cabeçalhos originais: perfil, produto, minimo, rentabilidade)\nconst cabecalhos = linhas.shift();\n\n// Mapeia cada linha para o formato JSON desejado\nreturn linhas.map(linha => {\n  // Divide a linha pelas vírgulas\n  const colunas = linha.split(',');\n\n  return {\n    json: {\n      Nome: colunas[1] ? colunas[1].trim() : '',       // O produto mapeia para \"Nome\"\n      Email: colunas[3] ? colunas[3].trim() : '',      // A rentabilidade mapeia para \"Email\"\n      Saldo: colunas[2] ? colunas[2].trim() : '',      // O valor mínimo mapeia para \"Saldo\"\n      Perfil: colunas[0] ? colunas[0].trim() : ''      // O perfil mapeia para \"Perfil\"\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        560
+      ],
+      "id": "f59b8320-ca55-4c3e-94c9-54e45c300549",
+      "name": "Code para formatar o investimento"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Acessa a lista de clientes dentro do corpo (body) da requisição\nconst clientes = typeof $input.item.json.body === 'string' \n  ? JSON.parse(_input.item.json.body).clientes \n  : $input.item.json.body.clientes;\n\n// Transforma cada cliente em um formato nativo do n8n (um item por cliente)\nreturn clientes.map(cliente => {\n  return {\n    json: {\n      Nome: cliente.nome,\n      Email: cliente.email,\n      Saldo: cliente.saldo,\n      Perfil: cliente.perfil\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        752
+      ],
+      "id": "d61b3094-86e6-491b-8aff-bf5eeebbe367",
+      "name": "Code para formatar os Clientes"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.pre_prompt }}",
+        "messages": {
+          "messageValues": []
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1120,
+        656
+      ],
+      "id": "0ca518e8-6c5d-4689-b875-2334f4a4f88c",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.8-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1192,
+        872
+      ],
+      "id": "9f491a96-5a63-4e76-85e0-fda3f4df6839",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "zYkceY07a1yNzxeJ",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        896,
+        656
+      ],
+      "id": "ef12be1c-1c00-4b64-b32a-e15a56c2eb56",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "sendTo": "criscileandro@gmail.com",
+        "subject": "Estratégia de Investimentos",
+        "emailType": "text",
+        "message": "={{ $json.text }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1472,
+        656
+      ],
+      "id": "aa7ef234-a503-4c5e-a98a-06b99eb30c11",
+      "name": "Send a message",
+      "webhookId": "318066cb-a0c3-47d1-92f5-9baeb32efc62",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "VAPRgpLwxduCg5sh",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1696,
+        768
+      ],
+      "id": "411d3baa-ec71-48c2-a18e-98cf8477e87b",
+      "name": "Wait",
+      "webhookId": "75b1e184-98bd-43f1-bb19-82ed2ffb4b75"
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "localhost:5678",
+            "user-agent": "python-requests/2.34.2",
+            "accept-encoding": "gzip, deflate, zstd",
+            "accept": "*/*",
+            "connection": "keep-alive",
+            "content-length": "1047",
+            "content-type": "application/json"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "clientes": [
+              {
+                "nome": "Ana Silva",
+                "email": "ana@email.com",
+                "saldo": "R$ 12.500,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "Bruno Lima",
+                "email": "bruno@email.com",
+                "saldo": "R$ 3.200,00",
+                "perfil": "Moderado"
+              },
+              {
+                "nome": "Carla Souza",
+                "email": "carla@email.com",
+                "saldo": "R$ 28.900,00",
+                "perfil": "Arrojado"
+              },
+              {
+                "nome": "Daniel Oliveira",
+                "email": "daniel@email.com",
+                "saldo": "R$ 850,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "Elena Rodrigues",
+                "email": "elena@email.com",
+                "saldo": "R$ 45.000,00",
+                "perfil": "Arrojado"
+              },
+              {
+                "nome": "Felipe Santos",
+                "email": "felipe@email.com",
+                "saldo": "R$ 7.800,00",
+                "perfil": "Moderado"
+              },
+              {
+                "nome": "Gabriela Costa",
+                "email": "gabriela@email.com",
+                "saldo": "R$ 1.500,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "Henrique Alves",
+                "email": "henrique@email.com",
+                "saldo": "R$ 22.300,00",
+                "perfil": "Moderado"
+              },
+              {
+                "nome": "Isabela Martins",
+                "email": "isabela@email.com",
+                "saldo": "R$ 500,00",
+                "perfil": "Conservador"
+              },
+              {
+                "nome": "João Pereira",
+                "email": "joao@email.com",
+                "saldo": "R$ 15.000,00",
+                "perfil": "Arrojado"
+              }
+            ]
+          },
+          "webhookUrl": "http://localhost:5678/webhook-test/Clientes",
+          "executionMode": "test"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request Investimento",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code para formatar os Clientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request Investimento": {
+      "main": [
+        [
+          {
+            "node": "Code para formatar o investimento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code para formatar o investimento": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Code para formatar os Clientes": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Codigo para gerar o Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Codigo para gerar o Prompt": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "bc17f22d-897e-4e4a-a705-363e604046b1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "05c98d2fb89a665c3947b0dcd0bd0226eb2360c909f235060a707571d11577fa"
+  },
+  "nodeGroups": [],
+  "id": "hQn2ToKqAq7Th1wU",
+  "tags": []
+}
